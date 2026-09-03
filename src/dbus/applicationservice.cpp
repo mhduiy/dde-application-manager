@@ -28,6 +28,7 @@
 #include <QUrl>
 #include <QUuid>
 #include <algorithm>
+#include <fcntl.h>
 #include <new>
 #include <qcontainerfwd.h>
 #include <qdbuserror.h>
@@ -35,6 +36,7 @@
 #include <qlogging.h>
 #include <qnamespace.h>
 #include <qtmetamacros.h>
+#include <unistd.h>
 #include <utility>
 #include <wordexp.h>
 
@@ -1035,6 +1037,23 @@ bool ApplicationService::saveAutostartEntry(const QString &fileName, const Deskt
     if (writeBytes != content.size() || !autostartFile.flush()) {
         qWarning() << "incomplete write:" << autostartFile.error();
         return false;
+    }
+
+    // Ensure file content is flushed to physical disk so the autostart entry
+    // survives a hard reboot (BUG-375555).
+    if (autostartFile.handle() != -1) {
+        if (::fsync(autostartFile.handle()) != 0) {
+            qWarning() << "fsync autostart file failed:" << fileName;
+        }
+    }
+
+    // Sync the parent directory so the directory entry of a newly created file
+    // is also persisted to disk.
+    const QByteArray parentDirPath = autostartFileInfo.absolutePath().toLocal8Bit();
+    int dirFd = ::open(parentDirPath.constData(), O_RDONLY | O_DIRECTORY);
+    if (dirFd != -1) {
+        ::fsync(dirFd);
+        ::close(dirFd);
     }
 
     return true;
